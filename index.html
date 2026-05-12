@@ -67,6 +67,8 @@ function closeCamera() {
     document.getElementById('cameraArea').style.display = 'none';
 }
 
+<!-- 나머지 부분은 동일하며 <script> 내부의 captureImage 함수를 아래로 교체하세요 -->
+
 async function captureImage() {
     const loading = document.getElementById('loading');
     loading.style.display = 'block';
@@ -75,62 +77,74 @@ async function captureImage() {
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
-    // 비디오 현재 화면 캡처
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0);
 
-    // 가이드 영역 좌표 계산 (crop)
+    // 가이드 영역을 조금 더 넓게 설정 (문서 전체적인 위치 고려)
     const cropCanvas = document.createElement('canvas');
     const cropCtx = cropCanvas.getContext('2d');
     const cropX = canvas.width * 0.05;
-    const cropY = canvas.height * 0.4;
+    const cropY = canvas.height * 0.35; // 위쪽으로 조금 이동
     const cropWidth = canvas.width * 0.9;
-    const cropHeight = canvas.height * 0.15;
+    const cropHeight = canvas.height * 0.25; // 높이 확장
 
     cropCanvas.width = cropWidth;
     cropCanvas.height = cropHeight;
     cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
-    // 이미지 전처리 (대비 강화)
+    // [개선] 이미지 전처리: 그레이스케일 및 대비 강화
     const imageData = cropCtx.getImageData(0, 0, cropWidth, cropHeight);
     const data = imageData.data;
+    
+    // 평균 밝기 계산
+    let totalBrightness = 0;
     for (let i = 0; i < data.length; i += 4) {
-        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-        const val = avg > 120 ? 255 : 0; // 문맥에 따라 임계값 조정 가능
-        data[i] = data[i+1] = data[i+2] = val;
+        totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
+    }
+    const avgBrightness = totalBrightness / (data.length / 4);
+    const threshold = avgBrightness > 128 ? 130 : 100; // 환경에 따른 임계값 유동 조절
+
+    for (let i = 0; i < data.length; i += 4) {
+        const v = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        const finalVal = v > threshold ? 255 : 0;
+        data[i] = data[i+1] = data[i+2] = finalVal;
     }
     cropCtx.putImageData(imageData, 0, 0);
 
     try {
         const worker = await Tesseract.createWorker('eng');
         await worker.setParameters({
-            tessedit_char_whitelist: '0123456789ABCDEFGHJKLMNPRSTUVWXYZ', // 차대번호 가능 문자 제한
+            tessedit_char_whitelist: '0123456789ABCDEFGHJKLMNPRSTUVWXYZ',
         });
 
         const { data: { text } } = await worker.recognize(cropCanvas);
         await worker.terminate();
 
-        console.log("Raw Text:", text);
-
-        // 불필요한 공백 제거 및 17자리 추출
-        const cleanText = text.replace(/[^A-Z0-9]/g, '');
-        const vinMatch = cleanText.match(/[A-HJ-NPR-Z0-9]{10,17}/); // 10~17자리 유동적 추출
+        // [개선] 텍스트 정제 및 오타 교정
+        let cleanText = text.replace(/[^A-Z0-9]/g, '');
+        
+        // 차대번호는 대략 17자리 (패턴 분석)
+        const vinMatch = cleanText.match(/[A-Z0-9]{13,17}/);
 
         if(vinMatch) {
-            document.getElementById('vinNo').value = vinMatch[0];
-            alert('인식 완료!');
+            let resultVIN = vinMatch[0];
+            // 흔한 오타 교정 (예: 'I' -> '1', 'O' -> '0' 등 차대번호 규칙 적용)
+            resultVIN = resultVIN.replace(/I/g, '1').replace(/O/g, '0').replace(/Q/g, '0');
+            
+            document.getElementById('vinNo').value = resultVIN;
+            alert('인식 성공: ' + resultVIN);
         } else {
-            alert('번호 인식에 실패했습니다. 더 밝은 곳에서 가이드에 맞춰 다시 시도해주세요.');
+            alert('차대번호를 찾지 못했습니다. 번호가 가이드 중앙에 오도록 조금 더 가까이 대주세요.');
         }
     } catch(e) {
-        console.error(e);
-        alert('분석 중 오류 발생');
+        alert('분석 오류');
     } finally {
         loading.style.display = 'none';
         closeCamera();
     }
 }
+
 </script>
 </body>
 </html>
