@@ -77,84 +77,72 @@ async function captureImage() {
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
+    // 1. 최고 화질로 캡처
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0);
 
+    // 2. 가이드 영역(Crop) 추출 - 높이를 더 타이트하게 조정
     const cropCanvas = document.createElement('canvas');
     const cropCtx = cropCanvas.getContext('2d');
-    const cropX = canvas.width * 0.05;
-    const cropY = canvas.height * 0.38; 
-    const cropWidth = canvas.width * 0.9;
-    const cropHeight = canvas.height * 0.15;
+    const cropX = canvas.width * 0.1;
+    const cropY = canvas.height * 0.42; 
+    const cropWidth = canvas.width * 0.8;
+    const cropHeight = canvas.height * 0.08; // 아주 좁게 설정하여 번호만 타겟팅
 
     cropCanvas.width = cropWidth;
     cropCanvas.height = cropHeight;
     cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
-    const imageData = cropCtx.getImageData(0, 0, cropWidth, cropHeight);
-    const data = imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-        const val = avg > 130 ? 255 : 0; 
-        data[i] = data[i+1] = data[i+2] = val;
-    }
-    cropCtx.putImageData(imageData, 0, 0);
-
     try {
         const worker = await Tesseract.createWorker('eng');
+        
+        // [핵심] 단일 행 모드(PSM 7) 및 화이트리스트 설정
         await worker.setParameters({
-            tessedit_char_whitelist: '0123456789ABCDEFGHJKLMNPRSTUVWXYZ', 
+            tessedit_char_whitelist: '0123456789ABCDEFGHJKLMNPRSTUVWXYZ',
+            tessedit_pageseg_mode: '7', // 단일 텍스트 라인 모드
         });
 
         const { data: { text } } = await worker.recognize(cropCanvas);
         await worker.terminate();
 
-        // 1. 불필요한 공백 및 문자 제거
-        let cleanText = text.replace(/[^A-Z0-9]/g, '');
-        console.log("분석 원문:", cleanText);
+        // 3. 텍스트 정제
+        let cleanText = text.replace(/[^A-Z0-9]/g, '').trim();
+        console.log("필터 전 원문:", cleanText);
 
-        // 2. 오타 교정 (차대번호에 사용 안 되는 I, O, Q 교정)
-        // 마지막 6자리에 올 수 없는 문자를 숫자로 강제 치환하는 로직 포함
-        let correctedText = cleanText
-            .replace(/I/g, '1')
-            .replace(/O/g, '0')
-            .replace(/Q/g, '0');
-
-        // 3. 17자리 패턴 매칭 (앞 11자리 영문숫자 + 뒤 6자리 숫자)
-        // 뒤에서부터 6자리가 숫자인 패턴을 우선적으로 찾음
-        const vinRegex = /[A-Z0-9]{11}[0-9]{6}/g;
-        const matches = correctedText.match(vinRegex);
+        // 4. 정밀 패턴 매칭 (K로 시작하는 17자리 우선)
+        // 뒤쪽 6자리가 숫자인 패턴 매칭
+        const vinRegex = /K[A-Z0-9]{10}[0-9]{6}/g;
+        const matches = cleanText.match(vinRegex);
 
         if (matches) {
-            // 여러 개가 잡힐 경우 가장 마지막 6자리가 완벽한 것을 선택
-            const finalVin = matches[0];
-            document.getElementById('vinNo').value = finalVin;
-            alert('인식 성공: ' + finalVin);
+            document.getElementById('vinNo').value = matches[0];
+            alert('정규 패턴 인식 성공: ' + matches[0]);
         } else {
-            // 패턴이 안 맞을 경우, 17자 이상이면 뒤쪽 6자리가 숫자인 지점을 찾아 추출
-            let found = false;
-            for (let i = 0; i <= correctedText.length - 17; i++) {
-                let candidate = correctedText.substring(i, i + 17);
-                if (/^[A-Z0-9]{11}[0-9]{6}$/.test(candidate)) {
-                    document.getElementById('vinNo').value = candidate;
-                    alert('패턴 분석 성공: ' + candidate);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                alert('17자리 차대번호 패턴을 찾지 못했습니다.\n마지막 숫자 6자리가 잘 나오게 찍어주세요.');
+            // 패턴이 안 맞을 경우, K부터 시작해서 17자리를 강제로 자름
+            let kIndex = cleanText.indexOf('K');
+            if (kIndex !== -1 && cleanText.length >= kIndex + 17) {
+                let forceVin = cleanText.substring(kIndex, kIndex + 17);
+                
+                // 마지막 6자리가 숫자인지 보정 (B->8 등)
+                let prefix = forceVin.substring(0, 11);
+                let suffix = forceVin.substring(11).replace(/B/g, '8').replace(/S/g, '5').replace(/G/g, '6');
+                let finalResult = prefix + suffix;
+
+                document.getElementById('vinNo').value = finalResult;
+                alert('보정 인식 성공: ' + finalResult);
+            } else {
+                alert('17자리 차대번호를 정확히 읽지 못했습니다.\n번호가 가이드 칸에 꽉 차도록 수평을 맞춰주세요.');
             }
         }
-
     } catch(e) {
-        alert('분석 오류 발생');
+        alert('OCR 분석 중 오류가 발생했습니다.');
     } finally {
         loading.style.display = 'none';
         closeCamera();
     }
 }
+
 
 
 </script>
