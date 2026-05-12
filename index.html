@@ -1,158 +1,150 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>차대번호 OCR 개선판</title>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<style>
-    body { margin:0; padding:20px; background:#f5f5f5; font-family:sans-serif; }
-    .container { max-width:500px; margin:auto; }
-    .card { background:white; border-radius:12px; padding:20px; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
-    .title { font-size:20px; font-weight:bold; margin-bottom:15px; color:#333; }
-    .input-row { display:flex; gap:8px; }
-    #vinNo { flex:1; height:45px; font-size:16px; padding:0 12px; border:1px solid #ddd; border-radius:8px; text-transform: uppercase; }
-    .camera-btn { width:50px; border:none; border-radius:8px; background:#0066ff; color:white; font-size:20px; cursor:pointer; }
-    #cameraArea { display:none; position:fixed; left:0; top:0; width:100%; height:100%; background:black; z-index:9999; }
-    #video { width:100%; height:100%; object-fit:cover; }
-    .scan-guide { position:absolute; left:5%; top:40%; width:90%; height:80px; border:2px solid #00ff66; border-radius:8px; box-shadow: 0 0 0 4000px rgba(0,0,0,0.5); }
-    .guide-text { position:absolute; top:32%; width:100%; text-align:center; color:white; font-size:16px; font-weight:bold; text-shadow: 1px 1px 2px #000; }
-    .capture-btn { position:absolute; bottom:50px; left:50%; transform:translateX(-50%); width:70px; height:70px; border-radius:50%; border:5px solid white; background:rgba(255,255,255,0.3); }
-    .close-btn { position:absolute; top:20px; right:20px; background:rgba(0,0,0,0.5); color:white; border:1px solid white; padding:8px 15px; border-radius:5px; z-index:10000; }
-    .loading { margin-top:20px; text-align:center; display:none; color:#0066ff; font-weight:bold; }
-    canvas { display:none; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OpenCV + Tesseract OCR</title>
+    <!-- 라이브러리 로드 -->
+    <script async src="https://opencv.org" onload="onOpenCvReady();"></script>
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { margin:0; padding:20px; background:#f5f5f5; font-family:sans-serif; }
+        .container { max-width:500px; margin:auto; }
+        .card { background:white; border-radius:12px; padding:20px; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
+        .input-row { display:flex; gap:8px; margin-top:15px; }
+        #vinNo { flex:1; height:45px; font-size:16px; padding:0 12px; border:1px solid #ddd; border-radius:8px; font-family:monospace; }
+        .camera-btn { width:50px; border:none; border-radius:8px; background:#0066ff; color:white; font-size:20px; cursor:pointer; }
+        #cameraArea { display:none; position:fixed; left:0; top:0; width:100%; height:100%; background:black; z-index:9999; }
+        #video { width:100%; height:100%; object-fit:cover; }
+        .scan-guide { position:absolute; left:5%; top:42%; width:90%; height:60px; border:2px solid #00ff66; border-radius:8px; box-shadow: 0 0 0 4000px rgba(0,0,0,0.5); }
+        .capture-btn { position:absolute; bottom:50px; left:50%; transform:translateX(-50%); width:70px; height:70px; border-radius:50%; border:5px solid white; background:rgba(255,255,255,0.3); }
+        .close-btn { position:absolute; top:20px; right:20px; background:rgba(0,0,0,0.5); color:white; border:1px solid white; padding:8px 15px; border-radius:5px; z-index:10000; }
+        .loading { margin-top:20px; text-align:center; display:none; color:#0066ff; font-weight:bold; }
+        #status { font-size: 12px; color: #888; text-align: center; }
+        canvas { display:none; }
+    </style>
 </head>
 <body>
 
 <div class="container">
     <div class="card">
-        <div class="title">차대번호 OCR 테스트</div>
+        <div id="status">라이브러리 로딩 중...</div>
         <div class="input-row">
-            <input type="text" id="vinNo" placeholder="차대번호 17자리">
-            <button class="camera-btn" onclick="openCamera()">📷</button>
+            <input type="text" id="vinNo" placeholder="차대번호 17자리" readonly>
+            <button class="camera-btn" id="openBtn" onclick="openCamera()" disabled>📷</button>
         </div>
-        <div id="loading" class="loading">🔍 텍스트 분석 중... 잠시만 기다려주세요.</div>
+        <div id="loading" class="loading">🔍 OpenCV 전처리 및 분석 중...</div>
     </div>
 </div>
 
 <div id="cameraArea">
     <button class="close-btn" onclick="closeCamera()">닫기</button>
-    <video id="video" autoplay playsinline></video>
-    <div class="guide-text">차대번호를 가이드 사각형 안에 맞춰주세요</div>
+    <video id="video" autoplay playsinline></button>
     <div class="scan-guide"></div>
-    <button class="capture-btn" onclick="captureImage()"></button>
+    <button class="capture-btn" onclick="captureAndProcess()"></button>
 </div>
 
-<canvas id="canvas"></canvas>
+<canvas id="canvasInput"></canvas>
+<canvas id="canvasOutput"></canvas>
 
 <script>
 let stream;
+let isCvReady = false;
+
+function onOpenCvReady() {
+    isCvReady = true;
+    document.getElementById('status').innerText = '라이브러리 준비 완료';
+    document.getElementById('openBtn').disabled = false;
+}
 
 async function openCamera() {
     try {
         stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+            video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
         });
         document.getElementById('cameraArea').style.display = 'block';
-        const video = document.getElementById('video');
-        video.srcObject = stream;
-    } catch(e) {
-        alert('카메라 실행 실패: ' + e.message);
-    }
+        document.getElementById('video').srcObject = stream;
+    } catch(e) { alert('카메라 권한이 필요합니다.'); }
 }
 
 function closeCamera() {
-    if(stream) { stream.getTracks().forEach(track => track.stop()); }
+    if(stream) stream.getTracks().forEach(t => t.stop());
     document.getElementById('cameraArea').style.display = 'none';
 }
 
-<!-- 나머지 부분은 동일하며 <script> 내부의 captureImage 함수를 아래로 교체하세요 -->
-
-async function captureImage() {
+async function captureAndProcess() {
     const loading = document.getElementById('loading');
     loading.style.display = 'block';
     
     const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
+    const canvas = document.getElementById('canvasInput');
     const ctx = canvas.getContext('2d');
 
+    // 1. 영상 캡처
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0);
 
-    // 가이드 영역 추출 (번호가 꽉 차게 잘라냅니다)
-    const cropCanvas = document.createElement('canvas');
-    const cropCtx = cropCanvas.getContext('2d');
-    const cropX = canvas.width * 0.05;
-    const cropY = canvas.height * 0.4;
-    const cropWidth = canvas.width * 0.9;
-    const cropHeight = canvas.height * 0.15;
+    // 2. 가이드 영역 Crop (OpenCV 처리를 위해 Mat 객체로 변환)
+    let src = cv.imread(canvas);
+    let dst = new cv.Mat();
+    
+    // 가이드 영역 좌표 (중앙 부근)
+    let rect = new cv.Rect(canvas.width * 0.05, canvas.height * 0.42, canvas.width * 0.9, canvas.height * 0.08);
+    dst = src.roi(rect);
 
-    cropCanvas.width = cropWidth;
-    cropCanvas.height = cropHeight;
-    cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+    // 3. OpenCV 전처리 강화
+    cv.cvtColor(dst, dst, cv.COLOR_RGBA2GRAY, 0); // 그레이스케일
+    cv.threshold(dst, dst, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU); // 오츠 이진화 (자동 임계값)
+    
+    // 노이즈 제거 (모폴로지 연산)
+    let M = cv.Mat.ones(2, 2, cv.CV_8U);
+    cv.morphologyEx(dst, dst, cv.MORPH_CLOSE, M);
+
+    // 4. 전처리된 이미지를 다시 Canvas에 그려 Tesseract에 전달
+    cv.imshow('canvasOutput', dst);
+    const processedCanvas = document.getElementById('canvasOutput');
 
     try {
         const worker = await Tesseract.createWorker('eng');
         await worker.setParameters({
             tessedit_char_whitelist: '0123456789ABCDEFGHJKLMNPRSTUVWXYZ',
-            tessedit_pageseg_mode: '7', // 단일 행으로 인식하여 간격 무시
+            tessedit_pageseg_mode: '7', // 단일 행 모드
         });
 
-        const { data: { text } } = await worker.recognize(cropCanvas);
+        const { data: { text } } = await worker.recognize(processedCanvas);
         await worker.terminate();
 
-        // 1. 모든 공백 제거 및 대문자화
-        let rawText = text.replace(/[^A-Z0-9]/g, '').trim();
-        console.log("원문 데이터:", rawText);
+        let cleanText = text.replace(/[^A-Z0-9]/g, '').trim();
+        console.log("전처리 후 인식:", cleanText);
 
-        // 2. K로 시작하는 진짜 번호 위치 찾기
-        let kIndex = rawText.indexOf('K');
-        if (kIndex !== -1) {
-            // K부터 시작해서 이후의 텍스트만 취함
-            let candidate = rawText.substring(kIndex);
-            
-            // 3. 17자리 추출 (패턴: 앞 11자 + 뒤 6자 숫자)
-            if (candidate.length >= 17) {
-                let vin17 = candidate.substring(0, 17);
-                
-                // 4. 마지막 6자리 숫자 강제 보정 (오인식 잦은 문자 교정)
-                let prefix = vin17.substring(0, 11);
-                let suffix = vin17.substring(11)
-                    .replace(/S/g, '5')
-                    .replace(/B/g, '8')
-                    .replace(/G/g, '6')
-                    .replace(/T/g, '7') // T가 7로 읽힐 때 대비
-                    .replace(/I/g, '1')
-                    .replace(/O/g, '0');
+        // 정교한 17자리 추출 (K로 시작, 마지막 6자리 숫자)
+        const vinRegex = /K[A-Z0-9]{10}[0-9]{6}/;
+        const match = cleanText.match(vinRegex);
 
-                // 숫자만 남기기 (마지막 6자리가 숫자가 아닐 경우 대비)
-                suffix = suffix.replace(/[^0-9]/g, '');
-                
-                // 최종 17자리 완성
-                let finalResult = (prefix + suffix).substring(0, 17);
-
-                document.getElementById('vinNo').value = finalResult;
-                alert('차대번호 인식 성공!\n결과: ' + finalResult);
-            } else {
-                alert('17자리를 모두 읽지 못했습니다. 조금 더 멀리서 번호 전체가 가이드에 들어오게 해주세요.');
-            }
+        if (match) {
+            document.getElementById('vinNo').value = match[0];
+            alert('인식 성공: ' + match[0]);
         } else {
-            alert('차대번호(K)를 찾을 수 없습니다. 초점을 다시 맞춰주세요.');
+            // 차선책: K부터 17자 강제 추출
+            let kIdx = cleanText.indexOf('K');
+            if (kIdx !== -1 && cleanText.length >= kIdx + 17) {
+                let fallback = cleanText.substring(kIdx, kIdx + 17);
+                document.getElementById('vinNo').value = fallback;
+                alert('추정치 인식: ' + fallback);
+            } else {
+                alert('차대번호 패턴을 찾지 못했습니다. 더 선명하게 찍어주세요.');
+            }
         }
-
     } catch(e) {
-        alert('OCR 분석 실패');
+        alert('분석 오류');
     } finally {
+        // 메모리 해제
+        src.delete(); dst.delete(); M.delete();
         loading.style.display = 'none';
         closeCamera();
     }
 }
-
-
-
-
 </script>
 </body>
 </html>
